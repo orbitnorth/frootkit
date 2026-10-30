@@ -1,0 +1,73 @@
+{
+  "name": "frootkit",
+  "version": "1.2.2",
+  "description": "High-performance Next.js alternative for Froot — Preact SSR, nested layouts, dynamic routes, SSG, and Markdown engine",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "frootkit": "./bin/frootkit.js",
+    "froot-fullstack": "./bin/frootkit.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    },
+    "./router": {
+      "types": "./dist/router/index.d.ts",
+      "import": "./dist/router/index.js"
+    },
+    "./preact": {
+      "types": "./dist/preact/index.d.ts",
+      "import": "./dist/preact/index.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown/index.d.ts",
+      "import": "./dist/markdown/index.js"
+    },
+    "./components": {
+      "types": "./dist/components/index.d.ts",
+      "import": "./dist/components/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.ts"
+  },
+  "keywords": [
+    "froot",
+    "fullstack",
+    "nextjs",
+    "preact",
+    "ssr",
+    "ssg",
+    "layouts",
+    "router"
+  ],
+  "author": "OrbitNorth LLC",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orbitnorth/frootkit.git"
+  },
+  "homepage": "https://github.com/orbitnorth/frootkit#readme",
+  "bugs": {
+    "url": "https://github.com/orbitnorth/frootkit/issues"
+  },
+  "dependencies": {
+    "frootjs": "^1.0.6",
+    "preact": "^11.1.0",
+    "preact-render-to-string": "^6.8.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.8.0"
+  }
+}
