@@ -1,13 +1,13 @@
 {
-  "name": "frootkit",
-  "version": "1.2.2",
+  "name": "@orbitnorth/frootkit",
+  "version": "1.2.3",
   "description": "High-performance Next.js alternative for Froot — Preact SSR, nested layouts, dynamic routes, SSG, and Markdown engine",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "frootkit": "./bin/frootkit.js",
-    "froot-fullstack": "./bin/frootkit.js"
+    "frootkit": "bin/frootkit.js",
+    "froot-fullstack": "bin/frootkit.js"
   },
   "exports": {
     ".": {
@@ -51,6 +51,15 @@
   ],
   "author": "OrbitNorth LLC",
   "license": "MIT",
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/orbitnorth/frootkit.git"
