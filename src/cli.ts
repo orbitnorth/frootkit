@@ -111,34 +111,18 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } else if (command === 'create' || command === 'init') {
-    const projectDir = args[1] || 'my-frootkit-app';
-    const targetDir = path.resolve(cwd, projectDir);
-    console.log(`\n  ▲ Scaffolding FrootKit project into ${targetDir}...\n`);
-    try {
-      const { scaffoldProject } = await import('../../create-frootkit/dist/index.js');
-      const res = await scaffoldProject({
-        targetDir,
-        projectName: path.basename(targetDir),
-        pkgManager: 'npm',
-        gitInit: true,
-      });
-      console.log(`  ✓ Created ${res.fileCount} files`);
-      console.log(`\n  Next steps:\n    $ cd ${projectDir}\n    $ npm install\n    $ npm run dev\n`);
-      process.exit(0);
-    } catch {
-      // Fallback to npx
-      const { spawn } = await import('node:child_process');
-      const isWindows = process.platform === 'win32';
-      const npxArgs = ['create-frootkit', projectDir];
-      const execCmd = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'npx';
-      const finalArgs = isWindows ? ['/d', '/s', '/c', 'npx', ...npxArgs] : npxArgs;
+    const createArgs = args.slice(1);
+    const { spawn } = await import('node:child_process');
+    const isWindows = process.platform === 'win32';
+    const npxArgs = ['create-frootkit@latest', ...createArgs];
+    const execCmd = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'npx';
+    const finalArgs = isWindows ? ['/d', '/s', '/c', 'npx', ...npxArgs] : npxArgs;
 
-      const child = spawn(execCmd, finalArgs, {
-        stdio: 'inherit',
-        shell: false,
-      });
-      child.on('exit', (code) => process.exit(code ?? 0));
-    }
+    const child = spawn(execCmd, finalArgs, {
+      stdio: 'inherit',
+      shell: false,
+    });
+    child.on('exit', (code) => process.exit(code ?? 0));
   } else if (command === '--help' || command === '-h' || command === 'help') {
     console.log(`
   ▲ FrootKit — High-Performance Next.js Alternative
