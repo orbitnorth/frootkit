@@ -212,15 +212,47 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
     await router.discover(appDir);
   }
 
-  // 3. Define listen method
-  const listen = (p: number = port, cb?: () => void) => {
-    return app.listen(p, () => {
-      if (cb) {
-        cb();
-      } else {
-        console.log(`Froot Fullstack server listening at http://localhost:${p}`);
-      }
-    });
+  // 3. Define listen method with automatic port hunting & EADDRINUSE handling
+  const listen = (
+    p: number = port,
+    cb?: () => void,
+    listenOpts?: { maxRetries?: number }
+  ) => {
+    const isDev = process.env['NODE_ENV'] !== 'production';
+    const maxRetries = listenOpts?.maxRetries ?? (isDev ? 10 : 0);
+    let currentPort = p;
+
+    let serverInstance: any = null;
+
+    const tryListen = (): any => {
+      serverInstance = app.listen(currentPort, () => {
+        if (cb) {
+          cb();
+        } else {
+          console.log(`Froot Fullstack server listening at http://localhost:${currentPort}`);
+        }
+      });
+
+      serverInstance.once('error', (err: any) => {
+        if (err?.code === 'EADDRINUSE') {
+          if (currentPort - p < maxRetries) {
+            console.log(`  - Port ${currentPort} is in use, trying ${currentPort + 1}...`);
+            currentPort++;
+            tryListen();
+          } else {
+            console.error(
+              `\n  ✕ Port ${currentPort} is already in use. Specify a different port using --port <port> or stop the process running on port ${currentPort}.\n`
+            );
+          }
+        } else {
+          console.error('\n  ✕ Server error:', err);
+        }
+      });
+
+      return serverInstance;
+    };
+
+    return tryListen();
   };
 
   // 4. Define build method
