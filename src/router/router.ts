@@ -466,20 +466,117 @@ export class AppRouter {
 
   /**
    * Serves a compiled CSS file (e.g. Tailwind v4 dist/styles.css) at a route.
-   * Default route is '/styles.css'.
+   * Default route is '/styles.css'. Supports both GET and HEAD requests.
    */
   public serveCss(filePath: string, routePath: string = '/styles.css'): this {
     const resolvedPath = path.resolve(filePath);
     this.cssAssets.push({ filePath: resolvedPath, routePath });
 
-    this.app.get(routePath, async (c) => {
+    const handler = async (c: Context) => {
       try {
         const content = await fs.readFile(resolvedPath, 'utf8');
-        c.header('Content-Type', 'text/css; charset=utf-8');
-        c.header('Cache-Control', 'public, max-age=3600');
+        const headers = {
+          'Content-Type': 'text/css; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+          'Content-Length': String(Buffer.byteLength(content, 'utf8')),
+        };
+        if (c.req.method === 'HEAD') {
+          return new Response(null, { status: 200, headers });
+        }
+        c.header('Content-Type', headers['Content-Type']);
+        c.header('Cache-Control', headers['Cache-Control']);
+        c.header('Content-Length', headers['Content-Length']);
         return c.text(content);
       } catch {
         return c.text(`/* CSS file not found at ${resolvedPath} */`, 404);
+      }
+    };
+
+    this.app.get(routePath, handler);
+    if (typeof (this.app as any).on === 'function') {
+      this.app.on('HEAD', routePath, handler);
+    }
+
+    return this;
+  }
+
+  /**
+   * Serves static assets from a local directory (e.g. Next.js standard public/ directory).
+   * Supports both GET and HEAD methods, MIME types, If-Modified-Since HTTP 304 caching,
+   * and path traversal defense.
+   */
+  public serveStatic(options: { root: string; prefix?: string }): this {
+    const rootDir = path.resolve(options.root);
+    const prefix = options.prefix || '';
+
+    this.app.use(async (c: Context, next: () => Promise<Response | undefined | void>) => {
+      if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+        return next();
+      }
+
+      const pathname = c.req.path;
+      if (prefix && !pathname.startsWith(prefix)) {
+        return next();
+      }
+
+      const relativePath = prefix ? pathname.slice(prefix.length) : pathname;
+      const safeRelPath = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, '');
+      const filePath = path.join(rootDir, safeRelPath);
+
+      try {
+        const stat = await fs.stat(filePath);
+        if (!stat.isFile()) {
+          return next();
+        }
+
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeTypes: Record<string, string> = {
+          '.html': 'text/html; charset=utf-8',
+          '.css': 'text/css; charset=utf-8',
+          '.js': 'text/javascript; charset=utf-8',
+          '.mjs': 'text/javascript; charset=utf-8',
+          '.json': 'application/json; charset=utf-8',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.svg': 'image/svg+xml',
+          '.webp': 'image/webp',
+          '.avif': 'image/avif',
+          '.ico': 'image/x-icon',
+          '.txt': 'text/plain; charset=utf-8',
+          '.xml': 'application/xml; charset=utf-8',
+          '.pdf': 'application/pdf',
+          '.woff': 'font/woff',
+          '.woff2': 'font/woff2',
+          '.ttf': 'font/ttf',
+          '.wasm': 'application/wasm',
+        };
+
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        const headers: Record<string, string> = {
+          'Content-Type': contentType,
+          'Content-Length': String(stat.size),
+          'Last-Modified': stat.mtime.toUTCString(),
+          'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=86400',
+        };
+
+        const ifModifiedSince = c.req.header('if-modified-since');
+        if (ifModifiedSince) {
+          const clientTime = new Date(ifModifiedSince).getTime();
+          if (stat.mtime.getTime() <= clientTime) {
+            return new Response(null, { status: 304, headers });
+          }
+        }
+
+        if (c.req.method === 'HEAD') {
+          return new Response(null, { status: 200, headers });
+        }
+
+        const fileBuffer = await fs.readFile(filePath);
+        return new Response(fileBuffer, { status: 200, headers });
+      } catch {
+        return next();
       }
     });
 
@@ -532,12 +629,23 @@ export class AppRouter {
               }
             }
 
-            const rawReq = (c.req as any).raw || new Request(c.req.url, {
+            const baseReq = (c.req as any).raw || new Request(c.req.url, {
               method: c.req.method,
               headers: (c.req as any).raw?.headers || (c.req as any).headers || {},
             });
 
-            const result = await handler(rawReq, { params }, c);
+            const rawReq = new Proxy(baseReq, {
+              get(target, prop, receiver) {
+                if (prop === 'json') return () => (c.req as any).json();
+                if (prop === 'text') return () => (c.req as any).text();
+                if (prop === 'formData') return () => (c.req as any).formData();
+                if (prop === 'arrayBuffer') return () => (c.req as any).arrayBuffer();
+                const val = Reflect.get(target, prop, receiver);
+                return typeof val === 'function' ? val.bind(target) : val;
+              },
+            });
+
+            const result = await handler(rawReq as any, { params }, c);
 
             if (result instanceof Response) {
               return result;
@@ -547,6 +655,9 @@ export class AppRouter {
             }
             if (typeof result === 'string') {
               return c.text(result);
+            }
+            if (result === undefined || result === null) {
+              return new Response(null, { status: 204 });
             }
             return result;
           } catch (err: any) {
@@ -558,9 +669,16 @@ export class AppRouter {
           }
         };
 
-        (this.app as any)[methodLower](normalizedPattern, dispatch);
-        if (normalizedPattern !== '/') {
-          (this.app as any)[methodLower](`${normalizedPattern}/`, dispatch);
+        if (typeof (this.app as any)[methodLower] === 'function') {
+          (this.app as any)[methodLower](normalizedPattern, dispatch);
+          if (normalizedPattern !== '/') {
+            (this.app as any)[methodLower](`${normalizedPattern}/`, dispatch);
+          }
+        } else if (typeof (this.app as any).on === 'function') {
+          (this.app as any).on(method.toUpperCase(), normalizedPattern, dispatch);
+          if (normalizedPattern !== '/') {
+            (this.app as any).on(method.toUpperCase(), `${normalizedPattern}/`, dispatch);
+          }
         }
       }
     }
@@ -593,7 +711,7 @@ export class AppRouter {
     this.pages.push({ pattern, pageFn, options });
 
     const registerHandler = (routePath: string) => {
-      this.app.get(routePath, async (c) => {
+      const pageHandler = async (c: Context) => {
         const params: Record<string, string> = {};
         try {
           const currentPath = c.req.path;
@@ -692,6 +810,16 @@ export class AppRouter {
             });
           }
 
+          if (c.req.method === 'HEAD') {
+            return new Response(null, {
+              status: 200,
+              headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Content-Length': String(Buffer.byteLength(html, 'utf-8')),
+              },
+            });
+          }
+
           return c.html(html);
         } catch (err: any) {
           if (isNotFoundError(err)) {
@@ -699,7 +827,12 @@ export class AppRouter {
           }
           return this.renderError(err, c, { group: options?.group, params });
         }
-      });
+      };
+
+      this.app.get(routePath, pageHandler);
+      if (typeof (this.app as any).on === 'function') {
+        this.app.on('HEAD', routePath, pageHandler);
+      }
     };
 
     if (pattern.includes(':') && pattern.includes('?')) {

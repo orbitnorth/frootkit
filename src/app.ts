@@ -215,6 +215,15 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
     await router.discover(appDir);
   }
 
+  // 3. Auto-serve standard Next.js public/ static directory
+  const publicCandidateDirs = [path.join(cwd, 'public'), path.join(cwd, 'web', 'public')];
+  for (const pubDir of publicCandidateDirs) {
+    if (fsSync.existsSync(pubDir) && fsSync.statSync(pubDir).isDirectory()) {
+      router.serveStatic({ root: pubDir });
+      break;
+    }
+  }
+
   // 3. Define listen method with automatic port hunting & EADDRINUSE handling
   let activeServerInstance: any = null;
 
