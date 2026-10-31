@@ -20,6 +20,55 @@ for (let i = 0; i < cliArgs.length; i++) {
   }
 }
 
+/**
+ * Ensures @/* import alias is configured in tsconfig.json/jsconfig.json before TSX boots.
+ */
+function ensureImportAliasSync(cwd) {
+  try {
+    const hasSrc = fs.existsSync(path.join(cwd, 'src')) && fs.statSync(path.join(cwd, 'src')).isDirectory();
+    const alias = '@/*';
+    const target = hasSrc ? './src/*' : './*';
+    const tsConfigPath = path.join(cwd, 'tsconfig.json');
+    const jsConfigPath = path.join(cwd, 'jsconfig.json');
+
+    const configPath = fs.existsSync(tsConfigPath) ? tsConfigPath : (fs.existsSync(jsConfigPath) ? jsConfigPath : tsConfigPath);
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^\\:])\/\/.*$/gm, '$1');
+      const parsed = JSON.parse(raw);
+      parsed.compilerOptions = parsed.compilerOptions || {};
+      parsed.compilerOptions.baseUrl = parsed.compilerOptions.baseUrl || '.';
+      parsed.compilerOptions.paths = parsed.compilerOptions.paths || {};
+      if (!parsed.compilerOptions.paths[alias]) {
+        parsed.compilerOptions.paths[alias] = [target];
+        fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+      }
+    } else {
+      const newConfig = {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          baseUrl: '.',
+          paths: {
+            [alias]: [target],
+          },
+          jsx: 'react-jsx',
+          jsxImportSource: 'preact',
+          strict: true,
+          skipLibCheck: true,
+          noEmit: true,
+        },
+        include: hasSrc ? ['src/**/*'] : ['app/**/*', '**/*'],
+      };
+      fs.writeFileSync(tsConfigPath, JSON.stringify(newConfig, null, 2) + '\n', 'utf8');
+    }
+  } catch {}
+}
+
+ensureImportAliasSync(targetCwd);
+
 if (!process.env['FROOT_CLI_SPAWNED']) {
   let tsxUrl = null;
   const requireCandidates = [

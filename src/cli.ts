@@ -13,6 +13,7 @@ import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import { execSync, spawnSync } from 'node:child_process';
 import { createFullstackApp, build as runBuild } from './app.js';
+import { ensureImportAlias } from './alias.js';
 
 /**
  * Finds the Process ID (PID) currently listening on a TCP port.
@@ -92,6 +93,7 @@ async function main(): Promise<void> {
     } catch {}
   }
   process.env['FROOT_CWD'] = cwd;
+  ensureImportAlias({ cwd });
 
   if (command === 'build') {
     process.env['NODE_ENV'] = 'production';

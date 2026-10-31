@@ -106,3 +106,10 @@ export {
 
 // Process & Port Management
 export { getPidOnPort, killProcessOnPort } from './process.js';
+
+// Next.js-Style Import Alias Configuration
+export {
+  ensureImportAlias,
+  stripJsonComments,
+  type EnsureAliasOptions,
+} from './alias.js';

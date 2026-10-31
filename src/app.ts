@@ -8,6 +8,7 @@ import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import { Froot } from 'frootjs';
 import { createAppRouter, AppRouter } from './router/router.js';
+import { ensureImportAlias } from './alias.js';
 import type { TailwindOptions } from './router/tailwind.js';
 import type { StaticExportOptions, StaticExportResult } from './router/types.js';
 
@@ -185,6 +186,7 @@ export function resolveDefaultAssets(cwd: string): Array<{ from: string; to?: st
 export async function createFullstackApp(options: FullstackAppOptions = {}): Promise<FullstackAppInstance> {
   const cwd = path.resolve(options.cwd || findProjectRoot());
   process.env['FROOT_CWD'] = cwd;
+  ensureImportAlias({ cwd });
   const appDir = resolveAppDir(cwd, options.appDir);
   const defaultOut = appDir.includes(path.sep + 'web' + path.sep) && !cwd.endsWith('web') ? 'web/.froot' : '.froot';
   const outDir = path.resolve(cwd, options.outDir || defaultOut);
