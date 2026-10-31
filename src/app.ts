@@ -65,7 +65,8 @@ export interface FullstackAppInstance {
   appDir: string;
   outDir: string;
   options: FullstackAppOptions;
-  listen: (port?: number, cb?: () => void) => any;
+  listen: (port?: number, cb?: () => void, listenOpts?: { maxRetries?: number }) => any;
+  close: () => Promise<void>;
   build: (overrideOptions?: Partial<StaticExportOptions>) => Promise<StaticExportResult>;
 }
 
@@ -213,6 +214,8 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
   }
 
   // 3. Define listen method with automatic port hunting & EADDRINUSE handling
+  let activeServerInstance: any = null;
+
   const listen = (
     p: number = port,
     cb?: () => void,
@@ -222,10 +225,8 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
     const maxRetries = listenOpts?.maxRetries ?? (isDev ? 10 : 0);
     let currentPort = p;
 
-    let serverInstance: any = null;
-
     const tryListen = (): any => {
-      serverInstance = app.listen(currentPort, () => {
+      activeServerInstance = app.listen(currentPort, () => {
         if (cb) {
           cb();
         } else {
@@ -233,13 +234,13 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
         }
       });
 
-      serverInstance.once('error', (err: any) => {
+      activeServerInstance.once('error', (err: any) => {
         if (err?.code === 'EADDRINUSE') {
-          if (currentPort - p < maxRetries) {
+          if (maxRetries > 0 && currentPort - p < maxRetries) {
             console.log(`  - Port ${currentPort} is in use, trying ${currentPort + 1}...`);
             currentPort++;
             tryListen();
-          } else {
+          } else if (maxRetries > 0) {
             console.error(
               `\n  ✕ Port ${currentPort} is already in use. Specify a different port using --port <port> or stop the process running on port ${currentPort}.\n`
             );
@@ -249,10 +250,27 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
         }
       });
 
-      return serverInstance;
+      return activeServerInstance;
     };
 
     return tryListen();
+  };
+
+  const close = async (): Promise<void> => {
+    try {
+      router.stopTailwind();
+    } catch {}
+    if (activeServerInstance) {
+      try {
+        if (typeof activeServerInstance.closeAllConnections === 'function') {
+          activeServerInstance.closeAllConnections();
+        }
+        if (typeof activeServerInstance.closeIdleConnections === 'function') {
+          activeServerInstance.closeIdleConnections();
+        }
+        activeServerInstance.close();
+      } catch {}
+    }
   };
 
   // 4. Define build method
@@ -280,6 +298,7 @@ export async function createFullstackApp(options: FullstackAppOptions = {}): Pro
     outDir,
     options,
     listen,
+    close,
     build,
   };
 }

@@ -7,7 +7,7 @@
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -66,42 +66,32 @@ const DEFAULT_TAILWIND_V4_CSS = `@import "tailwindcss";
 
 @theme {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: 'JetBrains Mono', monospace;
 
-  --color-brand-primary: #10b981;
-  --color-brand-hover: #34d399;
-  --color-brand-50: #ecfdf5;
-  --color-brand-100: #d1fae5;
-  --color-brand-200: #a7f3d0;
-  --color-brand-300: #6ee7b7;
-  --color-brand-400: #34d399;
-  --color-brand-500: #10b981;
-  --color-brand-600: #059669;
-  --color-brand-700: #047857;
-  --color-brand-800: #065f46;
-  --color-brand-900: #064e3b;
-  --color-brand-950: #022c22;
+  --color-brand: #635bff;
+  --color-brand-hover: #5249e6;
+  --color-navy: #0a2540;
+  --color-slate: #425466;
+  --color-surface: #f6f9fc;
+  --color-hairline: #e6ebf1;
+  --color-cyan: #00d4ff;
+  --color-success: #24b47e;
+  --color-error: #cd3d64;
 }
 
-:root {
-  color-scheme: dark;
-}
-
-html {
-  background-color: #06090f;
-  color: #f8fafc;
-  font-family: var(--font-sans);
-  scroll-behavior: smooth;
+body {
+  font-size: 15px;
+  line-height: 24px;
+  background-color: #ffffff;
+  color: #425466;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Hard reset for SVGs: prevents flex ballooning across all browsers */
 svg {
   flex-shrink: 0;
   max-width: 100%;
 }
 
-/* Accessibility: Mandatory Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -274,9 +264,9 @@ export function watchTailwind(options: TailwindOptions = {}): { process: any; st
 
   const stop = () => {
     try {
-      if (child && !child.killed) {
+      if (child && !child.killed && child.pid) {
         if (process.platform === 'win32') {
-          spawn('taskkill', ['/pid', String(child.pid), '/f', '/t']);
+          spawnSync('taskkill', ['/pid', String(child.pid), '/f', '/t'], { stdio: 'ignore' });
         } else {
           child.kill('SIGTERM');
         }

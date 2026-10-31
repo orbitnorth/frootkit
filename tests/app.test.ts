@@ -47,5 +47,30 @@ describe('⚡ Next.js-Style Zero-Config createFullstackApp & CLI Engine', () => 
     const res = await instance.app.fetch(new Request('http://localhost/non-existent'));
     assert.equal(res.status, 404);
   });
+
+  it('should verify getPidOnPort and clean server close', async () => {
+    const { getPidOnPort, killProcessOnPort } = await import('../src/process.js');
+    assert.equal(typeof getPidOnPort, 'function');
+    assert.equal(typeof killProcessOnPort, 'function');
+
+    const testApp = await createFullstackApp({
+      cwd: process.cwd(),
+      autoListen: false,
+      tailwind: false,
+    });
+
+    const server = testApp.listen(34567, undefined, { maxRetries: 0 });
+    // Allow socket to bind
+    await new Promise((r) => setTimeout(r, 80));
+
+    const pid = getPidOnPort(34567);
+    assert.equal(pid, process.pid);
+
+    await testApp.close();
+    await new Promise((r) => setTimeout(r, 80));
+
+    const postClosePid = getPidOnPort(34567);
+    assert.equal(postClosePid, null, 'Port should be completely free after close()');
+  });
 });
 

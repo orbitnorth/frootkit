@@ -11,7 +11,11 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createFullstackApp, build as runBuild } from './app.js';
+
+import { getPidOnPort, killProcessOnPort } from './process.js';
+export { getPidOnPort, killProcessOnPort };
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -22,6 +26,12 @@ async function main(): Promise<void> {
   let host = process.env['HOST'] || '0.0.0.0';
   let cwd = process.cwd();
   let outDir: string | undefined;
+  const shouldKillPort =
+    args.includes('-k') ||
+    args.includes('--kill') ||
+    args.includes('-f') ||
+    args.includes('--force') ||
+    Boolean(process.env['FROOT_KILL_PORT']);
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === '-p' || args[i] === '--port') && args[i + 1]) {
@@ -84,6 +94,17 @@ async function main(): Promise<void> {
     }
 
     console.log(`\n  ▲ FrootKit ${isDev ? 'Development' : 'Production'} Server\n`);
+
+    // If requested with --kill or -k, terminate any stale process holding the port
+    if (shouldKillPort) {
+      const existingPid = getPidOnPort(port);
+      if (existingPid) {
+        console.log(`  - Terminating existing process on port ${port} (PID: ${existingPid})...`);
+        killProcessOnPort(port);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+
     try {
       const instance = await createFullstackApp({
         cwd,
@@ -91,12 +112,71 @@ async function main(): Promise<void> {
         autoListen: false,
       });
 
+      let serverInstance: any = null;
+      let isShuttingDown = false;
+
+      const cleanupAndExit = (code = 0) => {
+        if (isShuttingDown) return;
+        isShuttingDown = true;
+        try {
+          if (serverInstance) {
+            if (typeof serverInstance.closeAllConnections === 'function') {
+              serverInstance.closeAllConnections();
+            }
+            if (typeof serverInstance.closeIdleConnections === 'function') {
+              serverInstance.closeIdleConnections();
+            }
+            serverInstance.close();
+          }
+        } catch {}
+        try {
+          instance.close();
+        } catch {}
+        process.exit(code);
+      };
+
+      process.once('SIGINT', () => cleanupAndExit(0));
+      process.once('SIGTERM', () => cleanupAndExit(0));
+      process.once('SIGBREAK', () => cleanupAndExit(0));
+      process.once('SIGHUP', () => cleanupAndExit(0));
+      process.once('exit', () => cleanupAndExit(0));
+
+      if (process.stdin && typeof process.stdin.on === 'function') {
+        process.stdin.on('end', () => cleanupAndExit(0));
+        process.stdin.on('close', () => cleanupAndExit(0));
+      }
+
+      // Heartbeat: detect if parent process (e.g. pnpm, cmd, terminal tab) has terminated
+      const parentPids = [
+        process.ppid,
+        Number(process.env['FROOT_PARENT_PID']),
+        Number(process.env['FROOT_ROOT_PPID']),
+      ].filter((p) => p && p > 1 && !isNaN(p));
+
+      if (parentPids.length > 0) {
+        const parentWatcher = setInterval(() => {
+          for (const p of parentPids) {
+            try {
+              process.kill(p, 0);
+            } catch (err: any) {
+              if (err?.code === 'ESRCH') {
+                clearInterval(parentWatcher);
+                cleanupAndExit(0);
+                return;
+              }
+            }
+          }
+        }, 500);
+        parentWatcher.unref?.();
+      }
+
       const startServer = (targetPort: number, maxRetries = 10): Promise<{ server: any; port: number }> => {
         return new Promise((resolve, reject) => {
           let currentPort = targetPort;
 
           const tryListen = () => {
-            const server = instance.listen(currentPort);
+            const server = instance.listen(currentPort, undefined, { maxRetries: 0 });
+            serverInstance = server;
 
             server.once('listening', () => {
               resolve({ server, port: currentPort });
@@ -104,14 +184,24 @@ async function main(): Promise<void> {
 
             server.once('error', (err: any) => {
               if (err?.code === 'EADDRINUSE') {
+                const existingPid = getPidOnPort(currentPort);
+
+                if (shouldKillPort && existingPid) {
+                  console.log(`  - Terminating process on port ${currentPort} (PID: ${existingPid})...`);
+                  killProcessOnPort(currentPort);
+                  setTimeout(() => tryListen(), 250);
+                  return;
+                }
+
                 if (isDev && currentPort - targetPort < maxRetries) {
-                  console.log(`  - Port ${currentPort} is in use, trying ${currentPort + 1}...`);
+                  const pidNote = existingPid ? ` (occupied by PID ${existingPid})` : '';
+                  console.log(`  - Port ${currentPort} is in use${pidNote}, trying ${currentPort + 1}...`);
                   currentPort++;
                   tryListen();
                 } else {
                   reject(
                     new Error(
-                      `Port ${currentPort} is already in use. Specify a different port using -p, --port <port> or stop the process running on port ${currentPort}.`
+                      `Port ${currentPort} is already in use. Specify a different port using -p, --port <port>, or use --kill (-k) to terminate the stale process.`
                     )
                   );
                 }
@@ -171,6 +261,7 @@ async function main(): Promise<void> {
 
   Options:
     -p, --port <port>       Port to listen on (default: 3000)
+    -k, --kill              Terminate any stale process holding the requested port
     -H, --host <host>       Host address (default: 0.0.0.0)
     -C, --cwd <path>        Project root directory (default: current directory)
     -o, --out-dir <path>    Static output directory (default: .froot)
@@ -183,7 +274,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error('Fatal CLI error:', err);
-  process.exit(1);
-});
+const isEntryScript =
+  process.env['FROOT_CLI_SPAWNED'] === '1' ||
+  (process.argv[1] &&
+    path.resolve(process.argv[1]) === fileURLToPath(import.meta.url));
+
+if (isEntryScript) {
+  main().catch((err) => {
+    console.error('Fatal CLI error:', err);
+    process.exit(1);
+  });
+}

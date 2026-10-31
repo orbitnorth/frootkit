@@ -101,3 +101,6 @@ export {
   type LinkProps,
   type MarkdownProps,
 } from './components/index.js';
+
+// Process & Port Management
+export { getPidOnPort, killProcessOnPort } from './process.js';
