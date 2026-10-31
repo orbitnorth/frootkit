@@ -17,7 +17,7 @@ export interface DiscoverOptions {
 }
 
 export interface DiscoveredRoute {
-  type: 'layout' | 'page' | 'api';
+  type: 'layout' | 'page' | 'api' | 'not-found' | 'error';
   filePath: string;
   pattern: string;
 }
@@ -71,7 +71,7 @@ export function extractRouteGroup(relPath: string): string | undefined {
 /**
  * Parses a relative file path into an AppRouter route pattern.
  */
-export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 'api' | 'ignored'; pattern: string } {
+export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 'api' | 'not-found' | 'error' | 'ignored'; pattern: string } {
   const normalized = relPath.replace(/\\/g, '/');
   const ext = path.posix.extname(normalized);
   const baseName = path.posix.basename(normalized, ext);
@@ -94,6 +94,18 @@ export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 
   if (baseName === 'layout' || baseName === '_layout') {
     const pattern = formattedSegments.length === 0 ? '/' : `/${formattedSegments.join('/')}`;
     return { type: 'layout', pattern };
+  }
+
+  // 404 Not Found files: not-found.tsx, 404.tsx
+  if (baseName === 'not-found' || baseName === '404') {
+    const pattern = formattedSegments.length === 0 ? '/' : `/${formattedSegments.join('/')}`;
+    return { type: 'not-found', pattern };
+  }
+
+  // Error boundary files: error.tsx
+  if (baseName === 'error') {
+    const pattern = formattedSegments.length === 0 ? '/' : `/${formattedSegments.join('/')}`;
+    return { type: 'error', pattern };
   }
 
   // Next.js App Router API Routes: route.ts, route.js
@@ -132,7 +144,7 @@ export async function discoverRoutes(
 ): Promise<{ layouts: string[]; pages: string[]; apis: string[] }> {
   const resolvedRoot = path.resolve(appDir);
   const discovered: Array<{
-    type: 'layout' | 'page' | 'api';
+    type: 'layout' | 'page' | 'api' | 'not-found' | 'error';
     pattern: string;
     fullPath: string;
     group?: string | undefined;
@@ -273,8 +285,36 @@ export async function discoverRoutes(
         pageOptions.generateStaticParams = mod.generateStaticParams;
       }
 
+      if (typeof mod.loader === 'function') {
+        pageOptions.loader = mod.loader;
+      }
+
+      if (typeof mod.action === 'function') {
+        pageOptions.action = mod.action;
+      }
+
       router.page(item.pattern, pageFn, pageOptions);
       registeredPages.push(item.pattern);
+    }
+  }
+
+  // Register Not Found (404) custom views
+  const notFoundRoutes = discovered.filter((d) => d.type === 'not-found');
+  for (const item of notFoundRoutes) {
+    const mod = await loadModule(item.fullPath);
+    const notFoundFn = mod.default || mod.NotFound || mod.notFound;
+    if (typeof notFoundFn === 'function') {
+      router.setNotFound(notFoundFn);
+    }
+  }
+
+  // Register Error Boundaries (500)
+  const errorRoutes = discovered.filter((d) => d.type === 'error');
+  for (const item of errorRoutes) {
+    const mod = await loadModule(item.fullPath);
+    const errorFn = mod.default || mod.ErrorBoundary || mod.Error;
+    if (typeof errorFn === 'function') {
+      router.setErrorBoundary(errorFn);
     }
   }
 

@@ -1,4 +1,14 @@
-export { isPreactElement, renderPreact } from './render.js';
+export {
+  isPreactElement,
+  renderPreact,
+  serializeState,
+  deserializeState,
+  HydrationScript,
+  getHydrationData,
+  injectHydrationScript,
+  hydrateRoot,
+  type HydrationScriptProps,
+} from './render.js';
 export {
   type ComponentChild,
   type ComponentChildren,

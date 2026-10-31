@@ -6,7 +6,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { HTTPException, type Froot, type Context } from 'frootjs';
-import { isPreactElement, renderPreact } from '../preact/render.js';
+import { isPreactElement, renderPreact, injectHydrationScript } from '../preact/render.js';
+import { isNotFoundError, defaultNotFoundView } from './not-found.js';
+import { defaultErrorView } from './error-boundary.js';
 import { discoverRoutes } from './file-router.js';
 import {
   compileTailwind,
@@ -24,6 +26,8 @@ import type {
   ApiRouteModule,
   StaticExportOptions,
   StaticExportResult,
+  NotFoundComponent,
+  ErrorComponent,
 } from './types.js';
 
 /**
@@ -80,11 +84,95 @@ export class AppRouter {
   private readonly layouts: RegisteredLayout[] = [];
   private readonly cssAssets: RegisteredCssAsset[] = [];
   private readonly apiRoutes: RegisteredApiRoute[] = [];
+  private notFoundComponent?: NotFoundComponent | undefined;
+  private errorBoundaryComponent?: ErrorComponent | undefined;
   private tailwindOptions?: TailwindOptions | undefined;
   private tailwindStop?: (() => void) | undefined;
 
   constructor(app: Froot) {
     this.app = app;
+
+    // Attach default 404 handler for unmatched routes
+    if (typeof (this.app as any).notFound === 'function') {
+      (this.app as any).notFound(async (c: Context) => {
+        return this.renderNotFound(c);
+      });
+    }
+  }
+
+  /**
+   * Sets custom Not Found 404 component.
+   */
+  public setNotFound(fn: NotFoundComponent): this {
+    this.notFoundComponent = fn;
+    return this;
+  }
+
+  /**
+   * Sets custom Error Boundary 500 component.
+   */
+  public setErrorBoundary(fn: ErrorComponent): this {
+    this.errorBoundaryComponent = fn;
+    return this;
+  }
+
+  /**
+   * Renders 404 Not Found response wrapped in matching layouts.
+   */
+  public async renderNotFound(c: Context): Promise<Response> {
+    const currentPath = c.req.path;
+    const notFoundNode = this.notFoundComponent
+      ? await this.notFoundComponent({ currentPath })
+      : defaultNotFoundView();
+
+    const matchingLayouts = this.getMatchingLayouts(currentPath);
+    let finalTree = notFoundNode;
+    for (let i = matchingLayouts.length - 1; i >= 0; i--) {
+      const matchedLayout = matchingLayouts[i];
+      if (!matchedLayout) continue;
+      if (isHtmlDocument(finalTree)) break;
+
+      finalTree = await matchedLayout.layoutFn({
+        children: finalTree,
+        params: {},
+        currentPath,
+        metadata: { title: '404: Not Found' },
+      });
+    }
+
+    const html = typeof finalTree === 'string' ? finalTree : renderPreact(finalTree as any);
+    c.status(404);
+    return c.html(html);
+  }
+
+  /**
+   * Renders 500 Application Error response wrapped in matching layouts.
+   */
+  public async renderError(err: any, c: Context): Promise<Response> {
+    const currentPath = c.req.path;
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    const errorNode = this.errorBoundaryComponent
+      ? await this.errorBoundaryComponent({ error: errorObj })
+      : defaultErrorView({ error: errorObj });
+
+    const matchingLayouts = this.getMatchingLayouts(currentPath);
+    let finalTree = errorNode;
+    for (let i = matchingLayouts.length - 1; i >= 0; i--) {
+      const matchedLayout = matchingLayouts[i];
+      if (!matchedLayout) continue;
+      if (isHtmlDocument(finalTree)) break;
+
+      finalTree = await matchedLayout.layoutFn({
+        children: finalTree,
+        params: {},
+        currentPath,
+        metadata: { title: '500: Server Error' },
+      });
+    }
+
+    const html = typeof finalTree === 'string' ? finalTree : renderPreact(finalTree as any);
+    c.status(500);
+    return c.html(html);
   }
 
   /**
@@ -308,72 +396,111 @@ export class AppRouter {
 
     const registerHandler = (routePath: string) => {
       this.app.get(routePath, async (c) => {
-        // 1. Resolve path params & searchParams
-        const params: Record<string, string> = {};
-        const routeParams = (c.req as any).params || (c.req as any)._params || {};
-        if (typeof routeParams === 'object' && routeParams !== null) {
-          for (const [k, v] of Object.entries(routeParams)) {
-            params[k] = String(v ?? '');
-          }
-        }
+        try {
+          const currentPath = c.req.path;
 
-        const rawQuery = c.req.query();
-        const searchParams = (typeof rawQuery === 'object' && rawQuery !== null ? rawQuery : {}) as Record<
-          string,
-          string | string[]
-        >;
-
-        // 2. Resolve metadata
-        let metadata: Metadata | undefined;
-        if (options?.metadata) {
-          if (typeof options.metadata === 'function') {
-            metadata = await options.metadata({ params, searchParams, c });
-          } else {
-            metadata = options.metadata;
-          }
-        }
-
-        // 3. Render page content
-        const pageNode = await pageFn({ params, searchParams, c });
-
-        // 4. Wrap with matching layouts from innermost to outermost (root)
-        const currentPath = c.req.path;
-        const matchingLayouts = this.getMatchingLayouts(currentPath, options);
-
-        let finalTree = pageNode;
-        for (let i = matchingLayouts.length - 1; i >= 0; i--) {
-          const matchedLayout = matchingLayouts[i];
-          if (!matchedLayout) continue;
-
-          // If an inner layout or page already produced a full HTML document (e.g. <html>...</html>),
-          // outer layouts must not re-wrap it into another <html>!
-          if (isHtmlDocument(finalTree)) {
-            break;
+          // 1. Resolve path params & searchParams
+          const params: Record<string, string> = {};
+          const routeParams = (c.req as any).params || (c.req as any)._params || {};
+          if (typeof routeParams === 'object' && routeParams !== null) {
+            for (const [k, v] of Object.entries(routeParams)) {
+              params[k] = String(v ?? '');
+            }
           }
 
-          finalTree = await matchedLayout.layoutFn({
-            children: finalTree,
-            params,
-            currentPath,
-            ...(metadata !== undefined ? { metadata } : {}),
+          // Catch-all wildcard parameter extraction: /docs/* -> params.slug or params.wildcard
+          if (pattern.includes('*')) {
+            const prefix = pattern.split('*')[0] || '';
+            if (prefix && currentPath.startsWith(prefix)) {
+              const wildcardVal = currentPath.slice(prefix.length);
+              if (!params.wildcard) params.wildcard = wildcardVal;
+              if (pattern.includes('slug') && !params.slug) params.slug = wildcardVal;
+            }
+          }
+
+          const rawQuery = c.req.query();
+          const searchParams = (typeof rawQuery === 'object' && rawQuery !== null ? rawQuery : {}) as Record<
+            string,
+            string | string[]
+          >;
+
+          const rawReq = (c.req as any).raw || new Request(c.req.url, {
+            method: c.req.method,
+            headers: (c.req as any).raw?.headers || (c.req as any).headers || {},
           });
-        }
 
-        // 5. Render to HTML
-        let html: string;
-        if (typeof finalTree === 'string') {
-          html = finalTree;
-        } else if (isPreactElement(finalTree)) {
-          html = renderPreact(finalTree);
-        } else if (typeof finalTree === 'object' && finalTree !== null && 'tag' in finalTree) {
-          // Fallback if Froot internal JSX was returned
-          const { renderToHtml } = await import('frootjs/jsx');
-          html = await renderToHtml(finalTree as any);
-        } else {
-          html = renderPreact(finalTree as any);
-        }
+          // 2. Data Loader execution (Server function data loading)
+          let loaderData: any = undefined;
+          if (typeof options?.loader === 'function') {
+            loaderData = await options.loader({ params, searchParams, request: rawReq, c });
+          }
 
-        return c.html(html);
+          // 3. Resolve metadata
+          let metadata: Metadata | undefined;
+          if (options?.metadata) {
+            if (typeof options.metadata === 'function') {
+              metadata = await options.metadata({ params, searchParams, c, data: loaderData });
+            } else {
+              metadata = options.metadata;
+            }
+          }
+
+          // 4. Render page content
+          const pageNode = await pageFn({ params, searchParams, c, data: loaderData });
+
+          // 5. Wrap with matching layouts from innermost to outermost (root)
+          const matchingLayouts = this.getMatchingLayouts(currentPath, options);
+
+          let finalTree = pageNode;
+          for (let i = matchingLayouts.length - 1; i >= 0; i--) {
+            const matchedLayout = matchingLayouts[i];
+            if (!matchedLayout) continue;
+
+            // If an inner layout or page already produced a full HTML document (e.g. <html>...</html>),
+            // outer layouts must not re-wrap it into another <html>!
+            if (isHtmlDocument(finalTree)) {
+              break;
+            }
+
+            finalTree = await matchedLayout.layoutFn({
+              children: finalTree,
+              params,
+              currentPath,
+              ...(metadata !== undefined ? { metadata } : {}),
+            });
+          }
+
+          // 6. Render to HTML
+          let html: string;
+          if (typeof finalTree === 'string') {
+            html = finalTree;
+          } else if (isPreactElement(finalTree)) {
+            html = renderPreact(finalTree);
+          } else if (typeof finalTree === 'object' && finalTree !== null && 'tag' in finalTree) {
+            // Fallback if Froot internal JSX was returned
+            const { renderToHtml } = await import('frootjs/jsx');
+            html = await renderToHtml(finalTree as any);
+          } else {
+            html = renderPreact(finalTree as any);
+          }
+
+          // 7. Inject Hydration Payload if loaderData exists
+          if (loaderData !== undefined) {
+            html = injectHydrationScript(html, {
+              data: loaderData,
+              params,
+              currentPath,
+              ...(metadata ? { metadata } : {}),
+            });
+          }
+
+          return c.html(html);
+        } catch (err: any) {
+          if (isNotFoundError(err)) {
+            return this.renderNotFound(c);
+          }
+          return this.renderError(err, c);
+        }
       });
     };
 
@@ -385,6 +512,56 @@ export class AppRouter {
       registerHandler(requiredPattern);
     } else {
       registerHandler(pattern);
+    }
+
+    // Register Server Action POST handler if defined on page
+    if (typeof options?.action === 'function') {
+      const registerAction = (routePath: string) => {
+        this.app.post(routePath, async (c) => {
+          try {
+            const params: Record<string, string> = {};
+            const routeParams = (c.req as any).params || (c.req as any)._params || {};
+            if (typeof routeParams === 'object' && routeParams !== null) {
+              for (const [k, v] of Object.entries(routeParams)) {
+                params[k] = String(v ?? '');
+              }
+            }
+
+            const rawReq = (c.req as any).raw || new Request(c.req.url, {
+              method: c.req.method,
+              headers: (c.req as any).raw?.headers || (c.req as any).headers || {},
+              body: (c.req as any).raw?.body,
+            });
+
+            const actionResult = await options.action!({ request: rawReq, params, c });
+
+            if (actionResult instanceof Response) {
+              return actionResult;
+            }
+            if (typeof actionResult === 'object' && actionResult !== null) {
+              return c.json(actionResult);
+            }
+            if (typeof actionResult === 'string') {
+              return c.text(actionResult);
+            }
+            return actionResult;
+          } catch (err: any) {
+            if (isNotFoundError(err)) {
+              return this.renderNotFound(c);
+            }
+            return this.renderError(err, c);
+          }
+        });
+      };
+
+      if (pattern.includes(':') && pattern.includes('?')) {
+        const basePattern = pattern.replace(/\/:[a-zA-Z0-9_]+\?$/, '') || '/';
+        const requiredPattern = pattern.replace('?', '');
+        registerAction(basePattern);
+        registerAction(requiredPattern);
+      } else {
+        registerAction(pattern);
+      }
     }
 
     return this;
