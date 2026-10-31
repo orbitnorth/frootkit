@@ -91,23 +91,56 @@ async function main(): Promise<void> {
         autoListen: false,
       });
 
-      instance.listen(port, () => {
-        const displayHost = host === '0.0.0.0' ? 'localhost' : host;
-        console.log(`  - Local:    http://${displayHost}:${port}`);
-        console.log(`  - Routes:   ${instance.appDir}`);
-        console.log(`  - Engine:   Monomorphic V8 + Preact SSR + Next.js API Routes\n`);
+      const startServer = (targetPort: number, maxRetries = 10): Promise<{ server: any; port: number }> => {
+        return new Promise((resolve, reject) => {
+          let currentPort = targetPort;
 
-        const apis = instance.router.getApiRoutes();
-        if (apis.length > 0) {
-          console.log(`  API Routes:`);
-          for (const api of apis) {
-            console.log(`    • ${api.methods.join(', ').padEnd(16)} http://${displayHost}:${port}${api.pattern}`);
-          }
-          console.log('');
+          const tryListen = () => {
+            const server = instance.listen(currentPort);
+
+            server.once('listening', () => {
+              resolve({ server, port: currentPort });
+            });
+
+            server.once('error', (err: any) => {
+              if (err?.code === 'EADDRINUSE') {
+                if (isDev && currentPort - targetPort < maxRetries) {
+                  console.log(`  - Port ${currentPort} is in use, trying ${currentPort + 1}...`);
+                  currentPort++;
+                  tryListen();
+                } else {
+                  reject(
+                    new Error(
+                      `Port ${currentPort} is already in use. Specify a different port using -p, --port <port> or stop the process running on port ${currentPort}.`
+                    )
+                  );
+                }
+              } else {
+                reject(err);
+              }
+            });
+          };
+
+          tryListen();
+        });
+      };
+
+      const { port: boundPort } = await startServer(port);
+      const displayHost = host === '0.0.0.0' ? 'localhost' : host;
+      console.log(`  - Local:    http://${displayHost}:${boundPort}`);
+      console.log(`  - Routes:   ${instance.appDir}`);
+      console.log(`  - Engine:   Monomorphic V8 + Preact SSR + Next.js API Routes\n`);
+
+      const apis = instance.router.getApiRoutes();
+      if (apis.length > 0) {
+        console.log(`  API Routes:`);
+        for (const api of apis) {
+          console.log(`    • ${api.methods.join(', ').padEnd(16)} http://${displayHost}:${boundPort}${api.pattern}`);
         }
-      });
-    } catch (err) {
-      console.error('\n  ✕ Failed to start server:', err);
+        console.log('');
+      }
+    } catch (err: any) {
+      console.error(`\n  ✕ Failed to start server: ${err?.message || err}`);
       process.exit(1);
     }
   } else if (command === 'create' || command === 'init') {

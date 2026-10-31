@@ -161,3 +161,4 @@ Benefits of this design:
 - **Zero Raw Script Injection**: Non-executable JSON MIME type ensures the browser engine treats the payload strictly as passive data.
 - **Byte-Identical SSR DOM**: No hydration mismatch errors caused by character escaping differences.
 - **Fast Startup**: Browsers parse `JSON.parse()` significantly faster than large executable JavaScript bundles.
+
