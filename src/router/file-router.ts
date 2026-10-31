@@ -226,7 +226,8 @@ export async function discoverRoutes(
           await fs.writeFile(cachedFile, transpiled.outputText, 'utf8');
 
           return await import(pathToFileURL(cachedFile).href);
-        } catch {
+        } catch (transpileErr) {
+          console.error('Transpile error for', filePath, ':', transpileErr);
           throw err;
         }
       }

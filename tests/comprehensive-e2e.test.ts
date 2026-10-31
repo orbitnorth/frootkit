@@ -35,7 +35,7 @@ describe('🧪 FrootKit Comprehensive Verification & Checks', () => {
       assert.ok(fsSync.existsSync(path.join(tmpDir, 'package.json')), 'package.json must exist');
       assert.ok(fsSync.existsSync(path.join(tmpDir, 'src/app/layout.tsx')), 'src/app/layout.tsx must exist');
       assert.ok(fsSync.existsSync(path.join(tmpDir, 'src/app/page.tsx')), 'src/app/page.tsx must exist');
-      assert.ok(fsSync.existsSync(path.join(tmpDir, 'src/app/docs/layout.tsx')), 'src/app/docs/layout.tsx must exist');
+      assert.ok(fsSync.existsSync(path.join(tmpDir, 'src/app/api/health/route.ts')), 'src/app/api/health/route.ts must exist');
       assert.ok(fsSync.existsSync(path.join(tmpDir, 'src/styles.css')), 'src/styles.css must exist');
 
       // Verify zero wrapper files
@@ -68,12 +68,11 @@ describe('🧪 FrootKit Comprehensive Verification & Checks', () => {
       assert.equal(bodyCount, 1, 'Must contain exactly 1 <body> tag');
       assert.ok(homeHtml.includes('e2e-test-app') || homeHtml.includes('Froot'), 'Must contain app title');
 
-      // 5. Verify docs route
-      const docsHtmlPath = path.join(tmpDir, '.froot/docs/index.html');
-      assert.ok(fsSync.existsSync(docsHtmlPath), '.froot/docs/index.html must exist');
-      const docsHtml = await fs.readFile(docsHtmlPath, 'utf8');
-      assert.ok(docsHtml.startsWith('<!DOCTYPE html>'));
-      assert.equal((docsHtml.match(/<html/gi) || []).length, 1);
+      // 5. Verify API route discovery
+      const routesManifest = path.join(tmpDir, '.froot/routes-manifest.json');
+      assert.ok(fsSync.existsSync(routesManifest), 'routes-manifest.json must exist');
+      const manifest = JSON.parse(await fs.readFile(routesManifest, 'utf8'));
+      assert.ok(Array.isArray(manifest.apiRoutes), 'apiRoutes must be an array');
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

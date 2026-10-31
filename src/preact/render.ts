@@ -2,8 +2,16 @@
  * High-performance Preact Server-Side Rendering (SSR) utilities.
  */
 
-import { isValidElement, type ComponentChild, type VNode } from 'preact';
+import { h, Fragment, isValidElement, type ComponentChild, type VNode } from 'preact';
 import { renderToString } from 'preact-render-to-string';
+
+// Universal Preact/React shim: allows standard JSX compilers targeting React to work seamlessly with Preact SSR
+if (typeof (globalThis as any).React === 'undefined') {
+  (globalThis as any).React = {
+    createElement: h,
+    Fragment,
+  };
+}
 
 /**
  * Checks whether a value is a valid Preact VNode element.

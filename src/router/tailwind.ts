@@ -68,6 +68,8 @@ const DEFAULT_TAILWIND_V4_CSS = `@import "tailwindcss";
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
+  --color-brand-primary: #10b981;
+  --color-brand-hover: #34d399;
   --color-brand-50: #ecfdf5;
   --color-brand-100: #d1fae5;
   --color-brand-200: #a7f3d0;
@@ -83,6 +85,30 @@ const DEFAULT_TAILWIND_V4_CSS = `@import "tailwindcss";
 
 :root {
   color-scheme: dark;
+}
+
+html {
+  background-color: #06090f;
+  color: #f8fafc;
+  font-family: var(--font-sans);
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hard reset for SVGs: prevents flex ballooning across all browsers */
+svg {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+/* Accessibility: Mandatory Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 `;
 
