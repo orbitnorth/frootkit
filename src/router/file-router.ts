@@ -141,7 +141,13 @@ export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 
 export async function discoverRoutes(
   appDir: string,
   router: AppRouter
-): Promise<{ layouts: string[]; pages: string[]; apis: string[] }> {
+): Promise<{
+  layouts: string[];
+  pages: string[];
+  apis: string[];
+  notFounds?: string[];
+  errors?: string[];
+}> {
   const resolvedRoot = path.resolve(appDir);
   const discovered: Array<{
     type: 'layout' | 'page' | 'api' | 'not-found' | 'error';
@@ -298,23 +304,33 @@ export async function discoverRoutes(
     }
   }
 
-  // Register Not Found (404) custom views
+  // Register Not Found (404) custom views per route directory
   const notFoundRoutes = discovered.filter((d) => d.type === 'not-found');
+  const registeredNotFounds: string[] = [];
   for (const item of notFoundRoutes) {
     const mod = await loadModule(item.fullPath);
     const notFoundFn = mod.default || mod.NotFound || mod.notFound;
     if (typeof notFoundFn === 'function') {
-      router.setNotFound(notFoundFn);
+      router.notFound(item.pattern, notFoundFn, {
+        group: item.group,
+        filePath: item.fullPath,
+      });
+      registeredNotFounds.push(item.pattern);
     }
   }
 
-  // Register Error Boundaries (500)
+  // Register Error Boundaries (500) per route directory
   const errorRoutes = discovered.filter((d) => d.type === 'error');
+  const registeredErrors: string[] = [];
   for (const item of errorRoutes) {
     const mod = await loadModule(item.fullPath);
     const errorFn = mod.default || mod.ErrorBoundary || mod.Error;
     if (typeof errorFn === 'function') {
-      router.setErrorBoundary(errorFn);
+      router.errorBoundary(item.pattern, errorFn, {
+        group: item.group,
+        filePath: item.fullPath,
+      });
+      registeredErrors.push(item.pattern);
     }
   }
 
@@ -327,5 +343,11 @@ export async function discoverRoutes(
     registeredApis.push(item.pattern);
   }
 
-  return { layouts: registeredLayouts, pages: registeredPages, apis: registeredApis };
+  return {
+    layouts: registeredLayouts,
+    pages: registeredPages,
+    apis: registeredApis,
+    notFounds: registeredNotFounds,
+    errors: registeredErrors,
+  };
 }

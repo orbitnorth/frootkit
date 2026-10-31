@@ -164,4 +164,122 @@ describe('📁 File-Based Router & Layout Nesting', () => {
 
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
+
+  it('should support directory-scoped not-found files and wrap inside their matching layouts', async () => {
+    const app = new Froot();
+    const router = createAppRouter(app);
+
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'froot-not-found-test-'));
+    const appDir = path.join(tmpDir, 'app');
+    await fs.mkdir(path.join(appDir, 'dashboard', 'settings'), { recursive: true });
+    await fs.mkdir(path.join(appDir, 'blog'), { recursive: true });
+
+    // 1. Root layout & root not-found
+    await fs.writeFile(
+      path.join(appDir, 'layout.js'),
+      `export default function RootLayout({ children }) { return "<div id='root-shell'>" + children + "</div>"; }`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(appDir, 'not-found.js'),
+      `export default function RootNotFound() { return "<h1 id='root-404'>Root 404: Global Not Found</h1>"; }`,
+      'utf8'
+    );
+
+    // 2. Dashboard layout & dashboard not-found
+    await fs.writeFile(
+      path.join(appDir, 'dashboard', 'layout.js'),
+      `export default function DashboardLayout({ children }) { return "<div id='dashboard-shell'><aside>Sidebar</aside><main>" + children + "</main></div>"; }`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(appDir, 'dashboard', 'not-found.js'),
+      `export default function DashboardNotFound({ currentPath }) { return "<div id='dashboard-404'>Dashboard Resource Not Found at " + currentPath + "</div>"; }`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(appDir, 'dashboard', 'page.js'),
+      `export default function DashboardPage() { return "<h1>Dashboard Home</h1>"; }`,
+      'utf8'
+    );
+
+    // 3. Blog layout & blog not-found
+    await fs.writeFile(
+      path.join(appDir, 'blog', 'layout.js'),
+      `export default function BlogLayout({ children }) { return "<article id='blog-shell'>" + children + "</article>"; }`,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(appDir, 'blog', 'not-found.js'),
+      `export default function BlogNotFound() { return "<p id='blog-404'>Post or Author does not exist.</p>"; }`,
+      'utf8'
+    );
+
+    const discovered = await router.discover(appDir);
+    assert.ok(discovered.notFounds?.includes('/'));
+    assert.ok(discovered.notFounds?.includes('/dashboard'));
+    assert.ok(discovered.notFounds?.includes('/blog'));
+
+    // A. Unmatched root path -> Root 404 wrapped inside root layout
+    const rootRes = await app.fetch(new Request('http://localhost/non-existent-global-page'));
+    assert.equal(rootRes.status, 404);
+    const rootHtml = await rootRes.text();
+    assert.ok(rootHtml.includes("<div id='root-shell'>"));
+    assert.ok(rootHtml.includes("<h1 id='root-404'>Root 404: Global Not Found</h1>"));
+    assert.ok(!rootHtml.includes("id='dashboard-shell'"));
+
+    // B. Unmatched dashboard path -> Dashboard 404 wrapped inside DashboardLayout AND RootLayout!
+    const dashRes = await app.fetch(new Request('http://localhost/dashboard/settings/unknown-tab'));
+    assert.equal(dashRes.status, 404);
+    const dashHtml = await dashRes.text();
+    assert.ok(dashHtml.includes("<div id='root-shell'>"), 'Must be wrapped in root layout');
+    assert.ok(dashHtml.includes("<div id='dashboard-shell'><aside>Sidebar</aside><main>"), 'Must be wrapped in dashboard layout');
+    assert.ok(dashHtml.includes("<div id='dashboard-404'>Dashboard Resource Not Found at /dashboard/settings/unknown-tab</div>"), 'Must render directory-scoped not-found view');
+
+    // C. Unmatched blog path -> Blog 404 wrapped inside BlogLayout AND RootLayout!
+    const blogRes = await app.fetch(new Request('http://localhost/blog/missing-article-slug'));
+    assert.equal(blogRes.status, 404);
+    const blogHtml = await blogRes.text();
+    assert.ok(blogHtml.includes("<div id='root-shell'>"));
+    assert.ok(blogHtml.includes("<article id='blog-shell'>"));
+    assert.ok(blogHtml.includes("<p id='blog-404'>Post or Author does not exist.</p>"));
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should trigger directory-scoped not-found inside its layout when notFound() is thrown', async () => {
+    const { notFound } = await import('../dist/index.js');
+    const app = new Froot();
+    const router = createAppRouter(app);
+
+    // Root layout
+    router.layout('/', ({ children }) => `<div class="root">${children}</div>`);
+    router.notFound('/', () => `<h1>Root 404</h1>`);
+
+    // Store layout & store not-found
+    router.layout('/store', ({ children }) => `<nav class="store-nav"></nav><div class="store">${children}</div>`);
+    router.notFound('/store', ({ currentPath }) => `<div class="store-404">Item at ${currentPath} is out of stock or missing</div>`);
+
+    // Route that calls notFound()
+    router.page('/store/items/:id', ({ params }) => {
+      if (params.id === 'missing-item') {
+        notFound();
+      }
+      return `<h1>Item ${params.id}</h1>`;
+    });
+
+    // Valid item
+    const okRes = await app.fetch(new Request('http://localhost/store/items/item-123'));
+    assert.equal(okRes.status, 200);
+    const okHtml = await okRes.text();
+    assert.ok(okHtml.includes('Item item-123'));
+
+    // Missing item calling notFound() -> renders store notFound inside store layout + root layout!
+    const missingRes = await app.fetch(new Request('http://localhost/store/items/missing-item'));
+    assert.equal(missingRes.status, 404);
+    const missingHtml = await missingRes.text();
+    assert.ok(missingHtml.includes('<div class="root">'));
+    assert.ok(missingHtml.includes('<nav class="store-nav"></nav><div class="store">'));
+    assert.ok(missingHtml.includes('Item at /store/items/missing-item is out of stock or missing'));
+  });
 });

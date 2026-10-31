@@ -59,17 +59,18 @@ describe('⚡ Next.js-Style Zero-Config createFullstackApp & CLI Engine', () => 
       tailwind: false,
     });
 
-    const server = testApp.listen(34567, undefined, { maxRetries: 0 });
-    // Allow socket to bind
-    await new Promise((r) => setTimeout(r, 80));
+    const testPort = 34892;
+    await new Promise((r) => {
+      testApp.listen(testPort, () => r(null), { maxRetries: 0 });
+    });
 
-    const pid = getPidOnPort(34567);
+    const pid = getPidOnPort(testPort);
     assert.equal(pid, process.pid);
 
     await testApp.close();
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 100));
 
-    const postClosePid = getPidOnPort(34567);
+    const postClosePid = getPidOnPort(testPort);
     assert.equal(postClosePid, null, 'Port should be completely free after close()');
   });
 });

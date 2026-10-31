@@ -11,11 +11,49 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { execSync, spawnSync } from 'node:child_process';
 import { createFullstackApp, build as runBuild } from './app.js';
 
-import { getPidOnPort, killProcessOnPort } from './process.js';
-export { getPidOnPort, killProcessOnPort };
+/**
+ * Finds the Process ID (PID) currently listening on a TCP port.
+ */
+export function getPidOnPort(port: number): number | null {
+  try {
+    if (process.platform === 'win32') {
+      const stdout = execSync(`netstat -ano -p tcp`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      for (const line of stdout.split('\n')) {
+        if (line.includes(`:${port}`) && line.includes('LISTENING')) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parseInt(parts[parts.length - 1] || '', 10);
+          if (pid && pid !== process.pid) return pid;
+        }
+      }
+    } else {
+      const stdout = execSync(`lsof -ti :${port}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const pid = parseInt(stdout.trim().split('\n')[0] || '', 10);
+      if (pid && pid !== process.pid) return pid;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Forcefully terminates any process tree listening on a TCP port.
+ */
+export function killProcessOnPort(port: number): boolean {
+  const pid = getPidOnPort(port);
+  if (!pid) return false;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(pid), '/f', '/t'], { stdio: 'ignore' });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -277,7 +315,9 @@ async function main(): Promise<void> {
 const isEntryScript =
   process.env['FROOT_CLI_SPAWNED'] === '1' ||
   (process.argv[1] &&
-    path.resolve(process.argv[1]) === fileURLToPath(import.meta.url));
+    (process.argv[1].endsWith('cli.js') ||
+      process.argv[1].endsWith('frootkit.js') ||
+      process.argv[1].endsWith('frootkit')));
 
 if (isEntryScript) {
   main().catch((err) => {

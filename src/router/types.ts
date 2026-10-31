@@ -45,20 +45,37 @@ export type ActionFunction<TResult = any, TParams = Record<string, string>> = (
 
 export interface NotFoundProps {
   currentPath?: string;
+  params?: Record<string, string>;
 }
 
 export type NotFoundComponent = (
   props?: NotFoundProps
 ) => Promise<ComponentChild | string | VNode<any>> | ComponentChild | string | VNode<any>;
 
+export interface RegisteredNotFound {
+  prefix: string;
+  notFoundFn: NotFoundComponent;
+  options?: { group?: string | undefined; filePath?: string | undefined } | undefined;
+  filePath?: string | undefined;
+}
+
 export interface ErrorProps {
   error: Error;
   reset?: () => void;
+  currentPath?: string;
+  params?: Record<string, string>;
 }
 
 export type ErrorComponent = (
   props: ErrorProps
 ) => Promise<ComponentChild | string | VNode<any>> | ComponentChild | string | VNode<any>;
+
+export interface RegisteredErrorBoundary {
+  prefix: string;
+  errorFn: ErrorComponent;
+  options?: { group?: string | undefined; filePath?: string | undefined } | undefined;
+  filePath?: string | undefined;
+}
 
 export interface HydrationPayload<T = any> {
   data?: T;

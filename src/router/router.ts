@@ -28,6 +28,8 @@ import type {
   StaticExportResult,
   NotFoundComponent,
   ErrorComponent,
+  RegisteredNotFound,
+  RegisteredErrorBoundary,
 } from './types.js';
 
 /**
@@ -84,8 +86,8 @@ export class AppRouter {
   private readonly layouts: RegisteredLayout[] = [];
   private readonly cssAssets: RegisteredCssAsset[] = [];
   private readonly apiRoutes: RegisteredApiRoute[] = [];
-  private notFoundComponent?: NotFoundComponent | undefined;
-  private errorBoundaryComponent?: ErrorComponent | undefined;
+  private readonly notFounds: RegisteredNotFound[] = [];
+  private readonly errorBoundaries: RegisteredErrorBoundary[] = [];
   private tailwindOptions?: TailwindOptions | undefined;
   private tailwindStop?: (() => void) | undefined;
 
@@ -101,31 +103,192 @@ export class AppRouter {
   }
 
   /**
-   * Sets custom Not Found 404 component.
+   * Registers a Not Found (404) component for a specific route prefix or globally ('/').
+   * Supports Next.js-style directory-scoped `not-found.tsx` rendering inside matching parent layouts.
+   */
+  public notFound(
+    prefixOrFn: string | NotFoundComponent,
+    fn?: NotFoundComponent,
+    options?: { group?: string | undefined; filePath?: string | undefined }
+  ): this {
+    if (typeof prefixOrFn === 'function') {
+      this.notFounds.push({
+        prefix: '/',
+        notFoundFn: prefixOrFn,
+        options,
+        filePath: options?.filePath,
+      });
+    } else {
+      const cleanPrefix =
+        prefixOrFn.endsWith('/') && prefixOrFn !== '/' ? prefixOrFn.slice(0, -1) : prefixOrFn;
+      if (fn) {
+        this.notFounds.push({
+          prefix: cleanPrefix,
+          notFoundFn: fn,
+          options,
+          filePath: options?.filePath,
+        });
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Backward-compatible alias for setting the root Not Found 404 component.
    */
   public setNotFound(fn: NotFoundComponent): this {
-    this.notFoundComponent = fn;
+    return this.notFound('/', fn);
+  }
+
+  /**
+   * Resolves the closest matching `not-found.tsx` for a given path, matching directory hierarchies
+   * and route groups like in Next.js App Router.
+   */
+  public getMatchingNotFound(
+    currentPath: string,
+    options?: { group?: string | undefined }
+  ): RegisteredNotFound | null {
+    const cleanPath = currentPath.endsWith('/') && currentPath !== '/' ? currentPath.slice(0, -1) : currentPath;
+    const targetGroup = options?.group;
+
+    const matches: RegisteredNotFound[] = [];
+    for (const nf of this.notFounds) {
+      if (nf.options?.group && nf.options.group !== targetGroup) {
+        continue;
+      }
+
+      if (nf.prefix === '/') {
+        matches.push(nf);
+        continue;
+      }
+
+      if (cleanPath === nf.prefix || cleanPath.startsWith(`${nf.prefix}/`)) {
+        matches.push(nf);
+        continue;
+      }
+
+      if (nf.prefix.includes(':')) {
+        const regexStr = '^' + nf.prefix.replace(/:[a-zA-Z0-9_]+/g, '[^/]+') + '(/.*)?$';
+        if (new RegExp(regexStr).test(cleanPath)) {
+          matches.push(nf);
+          continue;
+        }
+      }
+    }
+
+    if (matches.length === 0) return null;
+
+    matches.sort((a, b) => {
+      const segsA = a.prefix === '/' ? 0 : a.prefix.split('/').filter(Boolean).length;
+      const segsB = b.prefix === '/' ? 0 : b.prefix.split('/').filter(Boolean).length;
+      if (segsB !== segsA) return segsB - segsA;
+      return b.prefix.length - a.prefix.length;
+    });
+
+    return matches[0] || null;
+  }
+
+  /**
+   * Registers an Error Boundary (500) component for a specific route prefix or globally ('/').
+   * Supports Next.js-style directory-scoped `error.tsx` rendering inside matching parent layouts.
+   */
+  public errorBoundary(
+    prefixOrFn: string | ErrorComponent,
+    fn?: ErrorComponent,
+    options?: { group?: string | undefined; filePath?: string | undefined }
+  ): this {
+    if (typeof prefixOrFn === 'function') {
+      this.errorBoundaries.push({
+        prefix: '/',
+        errorFn: prefixOrFn,
+        options,
+        filePath: options?.filePath,
+      });
+    } else {
+      const cleanPrefix =
+        prefixOrFn.endsWith('/') && prefixOrFn !== '/' ? prefixOrFn.slice(0, -1) : prefixOrFn;
+      if (fn) {
+        this.errorBoundaries.push({
+          prefix: cleanPrefix,
+          errorFn: fn,
+          options,
+          filePath: options?.filePath,
+        });
+      }
+    }
     return this;
   }
 
   /**
-   * Sets custom Error Boundary 500 component.
+   * Backward-compatible alias for setting the root Error Boundary 500 component.
    */
   public setErrorBoundary(fn: ErrorComponent): this {
-    this.errorBoundaryComponent = fn;
-    return this;
+    return this.errorBoundary('/', fn);
   }
 
   /**
-   * Renders 404 Not Found response wrapped in matching layouts.
+   * Resolves the closest matching `error.tsx` for a given path, matching directory hierarchies
+   * and route groups like in Next.js App Router.
    */
-  public async renderNotFound(c: Context): Promise<Response> {
-    const currentPath = c.req.path;
-    const notFoundNode = this.notFoundComponent
-      ? await this.notFoundComponent({ currentPath })
+  public getMatchingErrorBoundary(
+    currentPath: string,
+    options?: { group?: string | undefined }
+  ): RegisteredErrorBoundary | null {
+    const cleanPath = currentPath.endsWith('/') && currentPath !== '/' ? currentPath.slice(0, -1) : currentPath;
+    const targetGroup = options?.group;
+
+    const matches: RegisteredErrorBoundary[] = [];
+    for (const eb of this.errorBoundaries) {
+      if (eb.options?.group && eb.options.group !== targetGroup) {
+        continue;
+      }
+
+      if (eb.prefix === '/') {
+        matches.push(eb);
+        continue;
+      }
+
+      if (cleanPath === eb.prefix || cleanPath.startsWith(`${eb.prefix}/`)) {
+        matches.push(eb);
+        continue;
+      }
+
+      if (eb.prefix.includes(':')) {
+        const regexStr = '^' + eb.prefix.replace(/:[a-zA-Z0-9_]+/g, '[^/]+') + '(/.*)?$';
+        if (new RegExp(regexStr).test(cleanPath)) {
+          matches.push(eb);
+          continue;
+        }
+      }
+    }
+
+    if (matches.length === 0) return null;
+
+    matches.sort((a, b) => {
+      const segsA = a.prefix === '/' ? 0 : a.prefix.split('/').filter(Boolean).length;
+      const segsB = b.prefix === '/' ? 0 : b.prefix.split('/').filter(Boolean).length;
+      if (segsB !== segsA) return segsB - segsA;
+      return b.prefix.length - a.prefix.length;
+    });
+
+    return matches[0] || null;
+  }
+
+  /**
+   * Pre-renders and returns the 404 HTML string for a path wrapped inside all matching parent layouts.
+   */
+  public async renderNotFoundHtml(
+    currentPath: string = '/',
+    options?: { group?: string | undefined; params?: Record<string, string> }
+  ): Promise<string> {
+    const params = options?.params || {};
+    const matchedNf = this.getMatchingNotFound(currentPath, options);
+
+    const notFoundNode = matchedNf
+      ? await matchedNf.notFoundFn({ currentPath, params })
       : defaultNotFoundView();
 
-    const matchingLayouts = this.getMatchingLayouts(currentPath);
+    const matchingLayouts = this.getMatchingLayouts(currentPath, options);
     let finalTree = notFoundNode;
     for (let i = matchingLayouts.length - 1; i >= 0; i--) {
       const matchedLayout = matchingLayouts[i];
@@ -134,28 +297,45 @@ export class AppRouter {
 
       finalTree = await matchedLayout.layoutFn({
         children: finalTree,
-        params: {},
+        params,
         currentPath,
         metadata: { title: '404: Not Found' },
       });
     }
 
-    const html = typeof finalTree === 'string' ? finalTree : renderPreact(finalTree as any);
+    return typeof finalTree === 'string' ? finalTree : renderPreact(finalTree as any);
+  }
+
+  /**
+   * Renders 404 Not Found response wrapped in all matching parent layouts.
+   */
+  public async renderNotFound(
+    c: Context,
+    options?: { group?: string | undefined; params?: Record<string, string> }
+  ): Promise<Response> {
+    const currentPath = c.req.path;
+    const html = await this.renderNotFoundHtml(currentPath, options);
     c.status(404);
     return c.html(html);
   }
 
   /**
-   * Renders 500 Application Error response wrapped in matching layouts.
+   * Pre-renders and returns the 500 HTML string for an error wrapped inside all matching parent layouts.
    */
-  public async renderError(err: any, c: Context): Promise<Response> {
-    const currentPath = c.req.path;
+  public async renderErrorHtml(
+    err: any,
+    currentPath: string = '/',
+    options?: { group?: string | undefined; params?: Record<string, string> }
+  ): Promise<string> {
+    const params = options?.params || {};
     const errorObj = err instanceof Error ? err : new Error(String(err));
-    const errorNode = this.errorBoundaryComponent
-      ? await this.errorBoundaryComponent({ error: errorObj })
+    const matchedErr = this.getMatchingErrorBoundary(currentPath, options);
+
+    const errorNode = matchedErr
+      ? await matchedErr.errorFn({ error: errorObj, currentPath, params })
       : defaultErrorView({ error: errorObj });
 
-    const matchingLayouts = this.getMatchingLayouts(currentPath);
+    const matchingLayouts = this.getMatchingLayouts(currentPath, options);
     let finalTree = errorNode;
     for (let i = matchingLayouts.length - 1; i >= 0; i--) {
       const matchedLayout = matchingLayouts[i];
@@ -164,13 +344,25 @@ export class AppRouter {
 
       finalTree = await matchedLayout.layoutFn({
         children: finalTree,
-        params: {},
+        params,
         currentPath,
         metadata: { title: '500: Server Error' },
       });
     }
 
-    const html = typeof finalTree === 'string' ? finalTree : renderPreact(finalTree as any);
+    return typeof finalTree === 'string' ? finalTree : renderPreact(finalTree as any);
+  }
+
+  /**
+   * Renders 500 Application Error response wrapped in all matching parent layouts.
+   */
+  public async renderError(
+    err: any,
+    c: Context,
+    options?: { group?: string | undefined; params?: Record<string, string> }
+  ): Promise<Response> {
+    const currentPath = c.req.path;
+    const html = await this.renderErrorHtml(err, currentPath, options);
     c.status(500);
     return c.html(html);
   }
@@ -297,7 +489,13 @@ export class AppRouter {
   /**
    * Automatically discovers and registers file-based routes (layouts, pages, and API routes) from the specified directory.
    */
-  public async discover(appDir: string): Promise<{ layouts: string[]; pages: string[]; apis: string[] }> {
+  public async discover(appDir: string): Promise<{
+    layouts: string[];
+    pages: string[];
+    apis: string[];
+    notFounds?: string[];
+    errors?: string[];
+  }> {
     return discoverRoutes(appDir, this);
   }
 
@@ -396,11 +594,11 @@ export class AppRouter {
 
     const registerHandler = (routePath: string) => {
       this.app.get(routePath, async (c) => {
+        const params: Record<string, string> = {};
         try {
           const currentPath = c.req.path;
 
           // 1. Resolve path params & searchParams
-          const params: Record<string, string> = {};
           const routeParams = (c.req as any).params || (c.req as any)._params || {};
           if (typeof routeParams === 'object' && routeParams !== null) {
             for (const [k, v] of Object.entries(routeParams)) {
@@ -497,9 +695,9 @@ export class AppRouter {
           return c.html(html);
         } catch (err: any) {
           if (isNotFoundError(err)) {
-            return this.renderNotFound(c);
+            return this.renderNotFound(c, { group: options?.group, params });
           }
-          return this.renderError(err, c);
+          return this.renderError(err, c, { group: options?.group, params });
         }
       });
     };
@@ -518,8 +716,8 @@ export class AppRouter {
     if (typeof options?.action === 'function') {
       const registerAction = (routePath: string) => {
         this.app.post(routePath, async (c) => {
+          const params: Record<string, string> = {};
           try {
-            const params: Record<string, string> = {};
             const routeParams = (c.req as any).params || (c.req as any)._params || {};
             if (typeof routeParams === 'object' && routeParams !== null) {
               for (const [k, v] of Object.entries(routeParams)) {
@@ -547,9 +745,9 @@ export class AppRouter {
             return actionResult;
           } catch (err: any) {
             if (isNotFoundError(err)) {
-              return this.renderNotFound(c);
+              return this.renderNotFound(c, { group: options?.group, params });
             }
-            return this.renderError(err, c);
+            return this.renderError(err, c, { group: options?.group, params });
           }
         });
       };
@@ -681,6 +879,28 @@ export class AppRouter {
       } catch {
         // ignore missing optional assets
       }
+    }
+
+    // Pre-render 404 Not Found pages into .froot/404.html and nested route dirs
+    try {
+      const root404Html = await this.renderNotFoundHtml('/');
+      const root404Path = path.join(outDir, '404.html');
+      await fs.writeFile(root404Path, root404Html, 'utf8');
+      filesWritten.push(root404Path);
+
+      // Pre-render nested 404 pages (e.g. dashboard/404.html)
+      for (const nf of this.notFounds) {
+        if (nf.prefix !== '/') {
+          const nestedHtml = await this.renderNotFoundHtml(nf.prefix, { group: nf.options?.group });
+          const nestedSubdir = nf.prefix.replace(/^\//, '');
+          const nested404Path = path.join(outDir, nestedSubdir, '404.html');
+          await fs.mkdir(path.dirname(nested404Path), { recursive: true });
+          await fs.writeFile(nested404Path, nestedHtml, 'utf8');
+          filesWritten.push(nested404Path);
+        }
+      }
+    } catch {
+      // Continue if not-found pre-rendering encounters non-critical warnings
     }
 
     // Write routes manifest
