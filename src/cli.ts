@@ -1,27 +1,34 @@
 #!/usr/bin/env node
 /**
- * Froot Fullstack Command-Line Interface (Next.js-style CLI).
+ * FrootKit Command-Line Interface (Next.js-style CLI).
  * Commands:
- *   froot-fullstack dev   - Start dev server with hot reload and Tailwind watcher
- *   froot-fullstack build - Build static site (SSG) with compiled Tailwind CSS
- *   froot-fullstack start - Start production HTTP server
+ *   frootkit dev   - Start dev server with hot reload, Tailwind v4 watcher & API routes
+ *   frootkit build - Build static site (SSG) with compiled Tailwind CSS and API routes manifest
+ *   frootkit start - Start production HTTP server with static file caching & dynamic API routes
+ *   frootkit create - Scaffold a new FrootKit project
  */
 
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import { createFullstackApp, build as runBuild } from './app.js';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0] || 'dev';
 
-  // Parse optional port, cwd, and outDir flags
+  // Parse optional port, host, cwd, and outDir flags
   let port = Number(process.env['PORT'] || 3000);
+  let host = process.env['HOST'] || '0.0.0.0';
   let cwd = process.cwd();
   let outDir: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === '-p' || args[i] === '--port') && args[i + 1]) {
       port = Number(args[i + 1]);
+    }
+    if ((args[i] === '-H' || args[i] === '--host') && args[i + 1]) {
+      host = String(args[i + 1]);
     }
     if ((args[i] === '-C' || args[i] === '--cwd') && args[i + 1]) {
       cwd = path.resolve(process.cwd(), args[i + 1] || '.');
@@ -41,14 +48,29 @@ async function main(): Promise<void> {
   if (command === 'build') {
     process.env['NODE_ENV'] = 'production';
     process.env['FROOT_BUILD'] = 'true';
-    console.log('\n  ▲ FrootKit (Next.js-Style Static Site Generator)\n');
+    console.log('\n  ▲ FrootKit (Next.js-Style App Router & Static Site Generator)\n');
     try {
       const result = await runBuild({ cwd, ...(outDir ? { outDir } : {}) });
       console.log(`\n  ✓ Production static export ready at ${result.outDir}`);
-      console.log(`  ✓ Rendered ${result.renderedRoutes.length} routes:`);
+      console.log(`  ✓ Rendered ${result.renderedRoutes.length} pages:`);
       for (const r of result.renderedRoutes) {
         console.log(`     - ${r}`);
       }
+
+      // Check for API routes manifest
+      const manifestPath = path.join(result.outDir, 'routes-manifest.json');
+      if (fsSync.existsSync(manifestPath)) {
+        try {
+          const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+          if (Array.isArray(manifest.apiRoutes) && manifest.apiRoutes.length > 0) {
+            console.log(`\n  ✓ Discovered ${manifest.apiRoutes.length} dynamic API routes:`);
+            for (const api of manifest.apiRoutes) {
+              console.log(`     - [${api.methods.join(', ')}] ${api.pattern}`);
+            }
+          }
+        } catch {}
+      }
+
       console.log('');
       process.exit(0);
     } catch (err) {
@@ -70,9 +92,19 @@ async function main(): Promise<void> {
       });
 
       instance.listen(port, () => {
-        console.log(`  - Local:    http://localhost:${port}`);
+        const displayHost = host === '0.0.0.0' ? 'localhost' : host;
+        console.log(`  - Local:    http://${displayHost}:${port}`);
         console.log(`  - Routes:   ${instance.appDir}`);
-        console.log(`  - Engine:   Monomorphic V8 + Preact SSR\n`);
+        console.log(`  - Engine:   Monomorphic V8 + Preact SSR + Next.js API Routes\n`);
+
+        const apis = instance.router.getApiRoutes();
+        if (apis.length > 0) {
+          console.log(`  API Routes:`);
+          for (const api of apis) {
+            console.log(`    • ${api.methods.join(', ').padEnd(16)} http://${displayHost}:${port}${api.pattern}`);
+          }
+          console.log('');
+        }
       });
     } catch (err) {
       console.error('\n  ✕ Failed to start server:', err);
@@ -97,31 +129,39 @@ async function main(): Promise<void> {
       // Fallback to npx
       const { spawn } = await import('node:child_process');
       const isWindows = process.platform === 'win32';
-      const npxCmd = isWindows ? 'npx.cmd' : 'npx';
-      const child = spawn(npxCmd, ['create-froot-fullstack', projectDir], {
+      const npxArgs = ['create-frootkit', projectDir];
+      const execCmd = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'npx';
+      const finalArgs = isWindows ? ['/d', '/s', '/c', 'npx', ...npxArgs] : npxArgs;
+
+      const child = spawn(execCmd, finalArgs, {
         stdio: 'inherit',
-        shell: isWindows,
+        shell: false,
       });
       child.on('exit', (code) => process.exit(code ?? 0));
     }
   } else if (command === '--help' || command === '-h' || command === 'help') {
     console.log(`
-Usage: froot-fullstack [command] [options]
+  ▲ FrootKit — High-Performance Next.js Alternative
 
-Commands:
-  dev     Start fullstack development server with Tailwind CSS compilation
-  build   Build and export static site with zero configuration
-  start   Start production server
-  create  Scaffold a new Froot Fullstack (Next.js Alternative) project
+  Usage:
+    frootkit [command] [options]
 
-Options:
-  -p, --port <port>   Port to listen on (default: 3000)
-  -C, --cwd <path>    Project working directory (default: process.cwd())
-  -h, --help          Show help message
+  Commands:
+    dev      Start development server with Tailwind CSS compilation & hot reload
+    build    Build and export static site with compiled Tailwind CSS into .froot
+    start    Start production HTTP server with dynamic API routes and static assets
+    create   Scaffold a new FrootKit project
+
+  Options:
+    -p, --port <port>       Port to listen on (default: 3000)
+    -H, --host <host>       Host address (default: 0.0.0.0)
+    -C, --cwd <path>        Project root directory (default: current directory)
+    -o, --out-dir <path>    Static output directory (default: .froot)
+    -h, --help              Show help information
 `);
     process.exit(0);
   } else {
-    console.error(`Unknown command: ${command}. Use "froot-fullstack --help" for available commands.`);
+    console.error(`Unknown command: ${command}. Run "frootkit --help" for available commands.`);
     process.exit(1);
   }
 }

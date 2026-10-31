@@ -1,4 +1,4 @@
-export { createAppRouter, AppRouter, isHtmlDocument } from './router.js';
+export { createAppRouter, AppRouter, isHtmlDocument, type RegisteredApiRoute } from './router.js';
 export { discoverRoutes, formatRouteSegment, parseRoutePattern, extractRouteGroup } from './file-router.js';
 export {
   compileTailwind,
@@ -16,6 +16,9 @@ export type {
   PageComponent,
   LayoutComponent,
   PageOptions,
+  ApiRouteContext,
+  ApiRouteHandler,
+  ApiRouteModule,
   StaticExportOptions,
   StaticExportResult,
 } from './types.js';

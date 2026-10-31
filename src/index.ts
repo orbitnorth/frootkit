@@ -31,6 +31,7 @@ export {
   watchTailwind,
   resolveTailwindBinary,
   resolveTailwindPaths,
+  RegisteredApiRoute,
   type TailwindOptions,
   type TailwindInstance,
   type Metadata,
@@ -40,6 +41,9 @@ export {
   type PageComponent,
   type LayoutComponent,
   type PageOptions,
+  type ApiRouteContext,
+  type ApiRouteHandler,
+  type ApiRouteModule,
   type StaticExportOptions,
   type StaticExportResult,
 } from './router/index.js';

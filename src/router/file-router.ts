@@ -17,7 +17,7 @@ export interface DiscoverOptions {
 }
 
 export interface DiscoveredRoute {
-  type: 'layout' | 'page';
+  type: 'layout' | 'page' | 'api';
   filePath: string;
   pattern: string;
 }
@@ -71,7 +71,7 @@ export function extractRouteGroup(relPath: string): string | undefined {
 /**
  * Parses a relative file path into an AppRouter route pattern.
  */
-export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 'ignored'; pattern: string } {
+export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 'api' | 'ignored'; pattern: string } {
   const normalized = relPath.replace(/\\/g, '/');
   const ext = path.posix.extname(normalized);
   const baseName = path.posix.basename(normalized, ext);
@@ -94,6 +94,12 @@ export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 
   if (baseName === 'layout' || baseName === '_layout') {
     const pattern = formattedSegments.length === 0 ? '/' : `/${formattedSegments.join('/')}`;
     return { type: 'layout', pattern };
+  }
+
+  // Next.js App Router API Routes: route.ts, route.js
+  if (baseName === 'route') {
+    const pattern = formattedSegments.length === 0 ? '/' : `/${formattedSegments.join('/')}`;
+    return { type: 'api', pattern };
   }
 
   // App Router Page files: page.tsx
@@ -123,10 +129,10 @@ export function parseRoutePattern(relPath: string): { type: 'layout' | 'page' | 
 export async function discoverRoutes(
   appDir: string,
   router: AppRouter
-): Promise<{ layouts: string[]; pages: string[] }> {
+): Promise<{ layouts: string[]; pages: string[]; apis: string[] }> {
   const resolvedRoot = path.resolve(appDir);
   const discovered: Array<{
-    type: 'layout' | 'page';
+    type: 'layout' | 'page' | 'api';
     pattern: string;
     fullPath: string;
     group?: string | undefined;
@@ -271,5 +277,14 @@ export async function discoverRoutes(
     }
   }
 
-  return { layouts: registeredLayouts, pages: registeredPages };
+  // Register API routes: route.ts
+  const apiRoutes = discovered.filter((d) => d.type === 'api');
+  const registeredApis: string[] = [];
+  for (const item of apiRoutes) {
+    const mod = await loadModule(item.fullPath);
+    router.api(item.pattern, mod, item.fullPath);
+    registeredApis.push(item.pattern);
+  }
+
+  return { layouts: registeredLayouts, pages: registeredPages, apis: registeredApis };
 }

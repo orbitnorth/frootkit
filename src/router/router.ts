@@ -5,7 +5,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { Froot } from 'frootjs';
+import { HTTPException, type Froot, type Context } from 'frootjs';
 import { isPreactElement, renderPreact } from '../preact/render.js';
 import { discoverRoutes } from './file-router.js';
 import {
@@ -21,6 +21,7 @@ import type {
   LayoutComponent,
   LayoutOptions,
   PageOptions,
+  ApiRouteModule,
   StaticExportOptions,
   StaticExportResult,
 } from './types.js';
@@ -66,11 +67,19 @@ interface RegisteredCssAsset {
   routePath: string;
 }
 
+export interface RegisteredApiRoute {
+  pattern: string;
+  methods: string[];
+  filePath?: string | undefined;
+  routeModule: ApiRouteModule;
+}
+
 export class AppRouter {
   private readonly app: Froot;
   private readonly pages: RegisteredPage[] = [];
   private readonly layouts: RegisteredLayout[] = [];
   private readonly cssAssets: RegisteredCssAsset[] = [];
+  private readonly apiRoutes: RegisteredApiRoute[] = [];
   private tailwindOptions?: TailwindOptions | undefined;
   private tailwindStop?: (() => void) | undefined;
 
@@ -198,10 +207,95 @@ export class AppRouter {
   }
 
   /**
-   * Automatically discovers and registers file-based routes from the specified directory.
+   * Automatically discovers and registers file-based routes (layouts, pages, and API routes) from the specified directory.
    */
-  public async discover(appDir: string): Promise<{ layouts: string[]; pages: string[] }> {
+  public async discover(appDir: string): Promise<{ layouts: string[]; pages: string[]; apis: string[] }> {
     return discoverRoutes(appDir, this);
+  }
+
+  /**
+   * Registers a Next.js-style API route with exported HTTP method handlers.
+   * Runs natively on top of Froot router.
+   * Example:
+   * router.api('/api/users', {
+   *   GET: async (req, { params }) => Response.json({ users: [] }),
+   *   POST: async (req, { params }) => Response.json({ created: true }, { status: 201 }),
+   * });
+   */
+  public api(pattern: string, routeModule: ApiRouteModule, filePath?: string): this {
+    const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'] as const;
+    const implementedMethods: string[] = [];
+
+    const normalizedPattern = pattern.endsWith('/') && pattern.length > 1
+      ? pattern.slice(0, -1)
+      : pattern;
+
+    for (const method of HTTP_METHODS) {
+      const handler = routeModule[method];
+      if (typeof handler === 'function') {
+        implementedMethods.push(method);
+        const methodLower = method.toLowerCase() as 'get' | 'post' | 'put' | 'delete' | 'patch' | 'options' | 'head';
+
+        const dispatch = async (c: Context) => {
+          try {
+            const params: Record<string, string> = {};
+            const routeParams = (c.req as any).params || (c.req as any)._params || {};
+            if (typeof routeParams === 'object' && routeParams !== null) {
+              for (const [k, v] of Object.entries(routeParams)) {
+                params[k] = String(v ?? '');
+              }
+            }
+
+            const rawReq = (c.req as any).raw || new Request(c.req.url, {
+              method: c.req.method,
+              headers: (c.req as any).raw?.headers || (c.req as any).headers || {},
+            });
+
+            const result = await handler(rawReq, { params }, c);
+
+            if (result instanceof Response) {
+              return result;
+            }
+            if (typeof result === 'object' && result !== null) {
+              return c.json(result);
+            }
+            if (typeof result === 'string') {
+              return c.text(result);
+            }
+            return result;
+          } catch (err: any) {
+            if (err instanceof HTTPException) {
+              return c.json({ error: err.message }, err.status);
+            }
+            console.error(`API Route Error [${method} ${normalizedPattern}]:`, err);
+            return c.json({ error: 'Internal Server Error', message: String(err?.message || err) }, 500);
+          }
+        };
+
+        (this.app as any)[methodLower](normalizedPattern, dispatch);
+        if (normalizedPattern !== '/') {
+          (this.app as any)[methodLower](`${normalizedPattern}/`, dispatch);
+        }
+      }
+    }
+
+    if (implementedMethods.length > 0) {
+      this.apiRoutes.push({
+        pattern: normalizedPattern,
+        methods: implementedMethods,
+        filePath,
+        routeModule,
+      });
+    }
+
+    return this;
+  }
+
+  /**
+   * Returns list of all registered Next.js-style API routes.
+   */
+  public getApiRoutes(): ReadonlyArray<RegisteredApiRoute> {
+    return this.apiRoutes;
   }
 
   /**
@@ -411,6 +505,19 @@ export class AppRouter {
         // ignore missing optional assets
       }
     }
+
+    // Write routes manifest
+    const manifest = {
+      version: 1,
+      pages: renderedRoutes,
+      apiRoutes: this.apiRoutes.map((r) => ({
+        pattern: r.pattern,
+        methods: r.methods,
+      })),
+    };
+    const manifestPath = path.join(outDir, 'routes-manifest.json');
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    filesWritten.push(manifestPath);
 
     const durationMs = Math.round(performance.now() - startTime);
     return {

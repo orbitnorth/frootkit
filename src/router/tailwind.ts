@@ -91,9 +91,22 @@ const DEFAULT_TAILWIND_V4_CSS = `@import "tailwindcss";
  */
 export function resolveTailwindBinary(cwd: string = process.cwd()): { bin: string; argsPrefix: string[] } | null {
   const isWindows = process.platform === 'win32';
-  const binName = isWindows ? 'tailwindcss.cmd' : 'tailwindcss';
 
-  // 1. Check local node_modules/.bin/tailwindcss
+  // 1. Direct Node script execution (fastest, zero deprecation warnings)
+  const scriptCandidates = [
+    path.join(cwd, 'node_modules', '@tailwindcss', 'cli', 'dist', 'index.mjs'),
+    path.join(cwd, '..', 'node_modules', '@tailwindcss', 'cli', 'dist', 'index.mjs'),
+    path.join(cwd, '..', '..', 'node_modules', '@tailwindcss', 'cli', 'dist', 'index.mjs'),
+  ];
+
+  for (const script of scriptCandidates) {
+    if (fsSync.existsSync(script)) {
+      return { bin: process.execPath, argsPrefix: [script] };
+    }
+  }
+
+  // 2. Check local node_modules/.bin/tailwindcss
+  const binName = isWindows ? 'tailwindcss.cmd' : 'tailwindcss';
   const candidates = [
     path.join(cwd, 'node_modules', '.bin', binName),
     path.join(cwd, '..', 'node_modules', '.bin', binName),
@@ -102,13 +115,18 @@ export function resolveTailwindBinary(cwd: string = process.cwd()): { bin: strin
 
   for (const candidate of candidates) {
     if (fsSync.existsSync(candidate)) {
+      if (isWindows) {
+        return { bin: process.env.ComSpec || 'cmd.exe', argsPrefix: ['/d', '/s', '/c', candidate] };
+      }
       return { bin: candidate, argsPrefix: [] };
     }
   }
 
-  // 2. Check npx
-  const npxBin = isWindows ? 'npx.cmd' : 'npx';
-  return { bin: npxBin, argsPrefix: ['tailwindcss'] };
+  // 3. Fallback to npx
+  if (isWindows) {
+    return { bin: process.env.ComSpec || 'cmd.exe', argsPrefix: ['/d', '/s', '/c', 'npx', '@tailwindcss/cli'] };
+  }
+  return { bin: 'npx', argsPrefix: ['@tailwindcss/cli'] };
 }
 
 /**
@@ -184,7 +202,7 @@ export async function compileTailwind(options: TailwindOptions = {}): Promise<st
     }
 
     try {
-      await execFileAsync(binary.bin, args, { cwd, shell: process.platform === 'win32' });
+      await execFileAsync(binary.bin, args, { cwd, shell: false });
       if (fsSync.existsSync(output)) {
         return await fs.readFile(output, 'utf8');
       }
@@ -225,7 +243,7 @@ export function watchTailwind(options: TailwindOptions = {}): { process: any; st
     cwd,
     stdio: 'ignore',
     detached: false,
-    shell: process.platform === 'win32',
+    shell: false,
   });
 
   const stop = () => {

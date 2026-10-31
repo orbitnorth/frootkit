@@ -48,6 +48,27 @@ export interface PageOptions {
   group?: string | undefined;
 }
 
+export interface ApiRouteContext<TParams = Record<string, string>> {
+  params: TParams;
+}
+
+export type ApiRouteHandler<TParams = Record<string, string>> = (
+  request: Request,
+  context: ApiRouteContext<TParams>,
+  c: Context
+) => Promise<Response | object | string | void> | Response | object | string | void;
+
+export interface ApiRouteModule {
+  GET?: ApiRouteHandler;
+  POST?: ApiRouteHandler;
+  PUT?: ApiRouteHandler;
+  DELETE?: ApiRouteHandler;
+  PATCH?: ApiRouteHandler;
+  OPTIONS?: ApiRouteHandler;
+  HEAD?: ApiRouteHandler;
+  [key: string]: any;
+}
+
 export interface StaticExportOptions {
   outDir: string;
   copyAssets?: Array<{ from: string; to?: string }>;
@@ -59,4 +80,3 @@ export interface StaticExportResult {
   filesWritten: string[];
   durationMs: number;
 }
-
