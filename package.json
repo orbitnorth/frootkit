@@ -1,6 +1,6 @@
 {
   "name": "@orbitnorth/frootkit",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "High-performance Next.js alternative for Froot — Preact SSR, nested layouts, dynamic routes, SSG, and Markdown engine",
   "type": "module",
   "main": "./dist/index.js",
